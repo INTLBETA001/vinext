@@ -2881,11 +2881,41 @@ hydrate();
                 // Apply middleware rewrite (URL and optional status code)
                 if (result.rewriteUrl) {
                   url = result.rewriteUrl;
+                  // Write the rewritten URL back onto req.url so every subsequent
+                  // handler in the connect chain sees the correct path. The local
+                  // `url` variable is only visible within this handler — anything
+                  // further down the chain (Vite's built-in middleware, the
+                  // Cloudflare plugin's handler, or any other connect middleware)
+                  // reads req.url directly. Without this, a middleware rewrite
+                  // would be invisible to those handlers and the original URL
+                  // would be dispatched instead.
+                  req.url = url;
                 }
                 if (result.rewriteStatus) {
                   (req as any).__vinextRewriteStatus = result.rewriteStatus;
                 }
               }
+
+              // ── Cloudflare Workers dev mode ────────────────────────────
+              // When @cloudflare/vite-plugin is present, ALL rendering runs
+              // inside the miniflare Worker subprocess — both App Router (via
+              // virtual:vinext-rsc-entry) and Pages Router (via
+              // virtual:vinext-server-entry → renderPage/handleApiRoute).
+              //
+              // The Worker entry already handles config redirects, rewrites,
+              // headers, and all routing internally. Running them here too
+              // would duplicate that logic and produce incorrect behaviour
+              // (double redirects, headers set on the wrong object, etc.).
+              //
+              // Middleware.ts is the only thing that belongs in the host connect
+              // handler — it has already run above. Any terminal middleware
+              // result (redirect, block response) has already been sent.
+              // Any rewrite has been written back to req.url above so the
+              // Cloudflare plugin's handler sees the correct path.
+              //
+              // Call next() to hand off to the Cloudflare plugin's connect
+              // handler, which dispatches the request to miniflare.
+              if (hasCloudflarePlugin) return next();
 
               // Build request context once for has/missing condition checks
               // across headers, redirects, and rewrites.
