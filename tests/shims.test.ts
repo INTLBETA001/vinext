@@ -2110,6 +2110,7 @@ describe("double-encoded path handling in middleware", () => {
     const code = generateRscEntry("/tmp/app", [
       {
         pattern: "/dashboard",
+        patternParts: ["dashboard"],
         isDynamic: false,
         params: [],
         pagePath: null,
@@ -2144,6 +2145,7 @@ describe("double-encoded path handling in middleware", () => {
       [
         {
           pattern: "/dashboard",
+          patternParts: ["dashboard"],
           isDynamic: false,
           params: [],
           pagePath: null,
