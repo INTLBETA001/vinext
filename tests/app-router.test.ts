@@ -3244,11 +3244,11 @@ describe("RSC plugin auto-registration", () => {
   });
 });
 
-// ── External rewrite proxy credential stripping (App Router) ─────────────────
+// ── External rewrite proxy credential forwarding (App Router) ────────────────
 // Regression test: the proxyExternalRequest (imported from config-matchers) in the generated RSC entry
-// must strip Cookie, Authorization, x-api-key, proxy-authorization, and
+// must forward credential headers like Next.js while still stripping
 // x-middleware-* headers before forwarding to external rewrite destinations.
-describe("App Router external rewrite proxy credential stripping", () => {
+describe("App Router external rewrite proxy credential forwarding", () => {
   let mockServer: import("node:http").Server;
   let mockPort: number;
   let capturedHeaders: import("node:http").IncomingHttpHeaders | null = null;
@@ -3295,7 +3295,7 @@ describe("App Router external rewrite proxy credential stripping", () => {
     await new Promise<void>((resolve) => mockServer?.close(() => resolve()));
   });
 
-  it("forwards credential headers through proxied requests to external rewrite targets", async () => {
+  it("forwards credential headers and strips x-middleware-* headers from proxied requests to external rewrite targets", async () => {
     mockResponseMode = "plain";
     capturedHeaders = null;
     capturedUrl = null;
@@ -3312,7 +3312,7 @@ describe("App Router external rewrite proxy credential stripping", () => {
     });
 
     expect(capturedHeaders).not.toBeNull();
-    // Credential headers must be forwarded (matching Next.js behavior)
+    // Credential headers must be forwarded to match Next.js external rewrite proxying.
     expect(capturedHeaders!["cookie"]).toBe("session=secret123");
     expect(capturedHeaders!["authorization"]).toBe("Bearer tok_secret");
     expect(capturedHeaders!["x-api-key"]).toBe("sk_live_secret");
