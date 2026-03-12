@@ -2,7 +2,15 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import { createServer, type ViteDevServer } from "vite";
 import path from "node:path";
 import vinext from "../packages/vinext/src/index.js";
-import { PAGES_FIXTURE_DIR, APP_FIXTURE_DIR, startFixtureServer } from "./helpers.js";
+import {
+  APP_FIXTURE_DIR,
+  PAGES_FIXTURE_DIR,
+  PAGES_I18N_DOMAINS_BASEPATH_FIXTURE_DIR,
+  PAGES_I18N_DOMAINS_FIXTURE_DIR,
+  createIsolatedFixture,
+  requestNodeServerWithHost,
+  startFixtureServer,
+} from "./helpers.js";
 
 const FIXTURE_DIR = PAGES_FIXTURE_DIR;
 
@@ -1039,9 +1047,9 @@ export default function About({ locale, locales, defaultLocale }) {
       redirect: "manual",
       headers: { "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8" },
     });
-    // Should 307 redirect to /fr/about
-    expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toBe("/fr/about");
+    // Next.js only auto-detects locale on the application root.
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
   });
 
   it("redirects to /de for Accept-Language: de on root", async () => {
@@ -1091,6 +1099,165 @@ export default function About({ locale, locales, defaultLocale }) {
     // "es" is not in locales — should not match as a locale
     // The URL /es/about won't match any page
     expect(res.status).toBe(404);
+  });
+});
+
+async function startDomainFixtureServer(
+  fixtureDir: string,
+  prefix: string,
+): Promise<{
+  port: number;
+  server: ViteDevServer;
+  tmpDir: string;
+}> {
+  const tmpDir = await createIsolatedFixture(fixtureDir, prefix);
+  const { server } = await startFixtureServer(tmpDir, {
+    server: {
+      host: "127.0.0.1",
+      allowedHosts: ["example.com", "example.fr"],
+    },
+  });
+  const addr = server.httpServer?.address();
+  if (!addr || typeof addr === "string") {
+    throw new Error(`Failed to start dev server for fixture ${fixtureDir}`);
+  }
+  return { port: addr.port, server, tmpDir };
+}
+
+describe("i18n domain routing (Pages Router)", () => {
+  let domainServer: ViteDevServer;
+  let domainTmpDir: string;
+  let domainPort: number;
+
+  beforeAll(async () => {
+    ({
+      server: domainServer,
+      tmpDir: domainTmpDir,
+      port: domainPort,
+    } = await startDomainFixtureServer(PAGES_I18N_DOMAINS_FIXTURE_DIR, "vinext-i18n-domain-"));
+  }, 30000);
+
+  afterAll(async () => {
+    try {
+      (domainServer?.httpServer as any)?.closeAllConnections?.();
+      await Promise.race([
+        domainServer?.close(),
+        new Promise((resolve) => setTimeout(resolve, 5000)),
+      ]);
+    } catch {
+      /* ignore */
+    }
+    const fsp = await import("node:fs/promises");
+    await fsp.rm(domainTmpDir, { recursive: true, force: true }).catch(() => {});
+  }, 15000);
+
+  it("redirects the root path to the preferred locale domain", async () => {
+    const res = await requestNodeServerWithHost(domainPort, "/", "example.com", {
+      "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+    });
+
+    expect(res.status).toBe(307);
+    expect(res.headers.location).toBe("http://example.fr/");
+  });
+
+  it("uses Accept-Language rather than NEXT_LOCALE to pick the preferred domain", async () => {
+    const res = await requestNodeServerWithHost(domainPort, "/", "example.com", {
+      "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+      Cookie: "NEXT_LOCALE=en",
+    });
+
+    expect(res.status).toBe(307);
+    expect(res.headers.location).toBe("http://example.fr/");
+  });
+
+  it("preserves the search string on root locale redirects", async () => {
+    const res = await requestNodeServerWithHost(
+      domainPort,
+      "/?utm=campaign&next=%2Fcheckout",
+      "example.com",
+      {
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+      },
+    );
+
+    expect(res.status).toBe(307);
+    expect(res.headers.location).toBe("http://example.fr/?utm=campaign&next=%2Fcheckout");
+  });
+
+  it("does not redirect unprefixed non-root paths for locale detection", async () => {
+    const res = await requestNodeServerWithHost(domainPort, "/about", "example.com", {
+      "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.location).toBeUndefined();
+  });
+
+  it("renders locale-switcher links with the target locale domain during SSR", async () => {
+    const res = await requestNodeServerWithHost(domainPort, "/about", "example.com");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('href="http://example.fr/about" id="switch-locale"');
+  });
+
+  it("uses the matched domain default locale in request context and __NEXT_DATA__", async () => {
+    const res = await requestNodeServerWithHost(domainPort, "/about", "example.fr");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('<p id="locale">fr</p>');
+    expect(res.body).toContain('<p id="defaultLocale">fr</p>');
+    expect(res.body).toContain('href="/about" id="switch-locale"');
+    expect(res.body).toContain('"defaultLocale":"fr"');
+    expect(res.body).toContain(
+      '"domainLocales":[{"domain":"example.com","defaultLocale":"en"},{"domain":"example.fr","defaultLocale":"fr","http":true}]',
+    );
+  });
+});
+
+describe("i18n domain routing with basePath (Pages Router)", () => {
+  let domainServer: ViteDevServer;
+  let domainTmpDir: string;
+  let domainPort: number;
+
+  beforeAll(async () => {
+    ({
+      server: domainServer,
+      tmpDir: domainTmpDir,
+      port: domainPort,
+    } = await startDomainFixtureServer(
+      PAGES_I18N_DOMAINS_BASEPATH_FIXTURE_DIR,
+      "vinext-i18n-domain-basepath-",
+    ));
+  }, 30000);
+
+  afterAll(async () => {
+    try {
+      (domainServer?.httpServer as any)?.closeAllConnections?.();
+      await Promise.race([
+        domainServer?.close(),
+        new Promise((resolve) => setTimeout(resolve, 5000)),
+      ]);
+    } catch {
+      /* ignore */
+    }
+    const fsp = await import("node:fs/promises");
+    await fsp.rm(domainTmpDir, { recursive: true, force: true }).catch(() => {});
+  }, 15000);
+
+  it("preserves basePath and trailingSlash in root locale redirects", async () => {
+    const res = await requestNodeServerWithHost(domainPort, "/app/?utm=campaign", "example.com", {
+      "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+    });
+
+    expect(res.status).toBe(307);
+    expect(res.headers.location).toBe("http://example.fr/app/?utm=campaign");
+  });
+
+  it("renders locale-switcher links with basePath on cross-domain hrefs", async () => {
+    const res = await requestNodeServerWithHost(domainPort, "/app/about/", "example.com");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('href="http://example.fr/app/about" id="switch-locale"');
   });
 });
 
@@ -3477,10 +3644,13 @@ describe("applyNavigationLocale", () => {
     // Set up window globals that applyNavigationLocale reads
     (globalThis as any).window = globalThis;
     (globalThis as any).__VINEXT_DEFAULT_LOCALE__ = "en";
+    (globalThis as any).__NEXT_DATA__ = undefined;
   });
 
   afterEach(() => {
     delete (globalThis as any).__VINEXT_DEFAULT_LOCALE__;
+    delete (globalThis as any).__NEXT_DATA__;
+    delete (globalThis as any).location;
     delete (globalThis as any).window;
   });
 
@@ -3526,6 +3696,57 @@ describe("applyNavigationLocale", () => {
 
   it("preserves hash when prefixing locale", () => {
     expect(applyNavigationLocale("/docs#intro", "de")).toBe("/de/docs#intro");
+  });
+
+  it("returns an absolute cross-domain URL when the locale belongs to another domain", () => {
+    (globalThis as any).__NEXT_DATA__ = {
+      domainLocales: [
+        { domain: "example.com", defaultLocale: "en" },
+        { domain: "example.fr", defaultLocale: "fr", http: true },
+      ],
+    };
+    (globalThis as any).location = {
+      protocol: "https:",
+      hostname: "example.com",
+      host: "example.com",
+    };
+
+    expect(applyNavigationLocale("/about", "fr")).toBe("http://example.fr/about");
+  });
+
+  it("includes basePath in cross-domain locale navigation URLs", async () => {
+    const originalBasePath = process.env.__NEXT_ROUTER_BASEPATH;
+    process.env.__NEXT_ROUTER_BASEPATH = "/app";
+    vi.resetModules();
+
+    try {
+      (globalThis as any).window = {
+        __NEXT_DATA__: {
+          domainLocales: [
+            { domain: "example.com", defaultLocale: "en" },
+            { domain: "example.fr", defaultLocale: "fr", http: true },
+          ],
+        },
+        __VINEXT_DEFAULT_LOCALE__: "en",
+        location: {
+          hostname: "example.com",
+          pathname: "/app/about",
+          search: "",
+        },
+        addEventListener() {},
+        removeEventListener() {},
+      };
+      const mod = await import("../packages/vinext/src/shims/router.js");
+
+      expect(mod.applyNavigationLocale("/about", "fr")).toBe("http://example.fr/app/about");
+    } finally {
+      if (originalBasePath === undefined) {
+        delete process.env.__NEXT_ROUTER_BASEPATH;
+      } else {
+        process.env.__NEXT_ROUTER_BASEPATH = originalBasePath;
+      }
+      vi.resetModules();
+    }
   });
 });
 
@@ -3659,8 +3880,8 @@ describe("NEXT_LOCALE cookie redirect behavior", () => {
       redirect: "manual",
       headers: { Cookie: "NEXT_LOCALE=de" },
     });
-    expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toBe("/de/about");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
   });
 
   it("NEXT_LOCALE cookie matching default locale does NOT redirect", async () => {

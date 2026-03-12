@@ -7,9 +7,11 @@
  */
 import { useState, useEffect, useCallback, useMemo, createElement, type ReactElement } from "react";
 import { RouterContext } from "./internal/router-context.js";
+import type { VinextNextData } from "../client/vinext-next-data.js";
 import { isValidModulePath } from "../client/validate-module-path.js";
 import { toBrowserNavigationHref, toSameOriginAppPath } from "./url-utils.js";
 import { stripBasePath } from "../utils/base-path.js";
+import { addLocalePrefix, getDomainLocaleUrl, type DomainLocale } from "../utils/domain-locale.js";
 import {
   addQueryParam,
   appendSearchParamsToUrl,
@@ -43,6 +45,8 @@ interface NextRouter {
   locales?: string[];
   /** Default locale */
   defaultLocale?: string;
+  /** Configured domain locales */
+  domainLocales?: VinextNextData["domainLocales"];
   /** Whether the router is ready */
   isReady: boolean;
   /** Whether this is a preview */
@@ -128,6 +132,22 @@ function resolveNavigationTarget(
   return applyNavigationLocale(as ?? resolveUrl(url), locale);
 }
 
+function getDomainLocales(): readonly DomainLocale[] | undefined {
+  return (window.__NEXT_DATA__ as VinextNextData | undefined)?.domainLocales;
+}
+
+function getCurrentHostname(): string | undefined {
+  return window.location?.hostname;
+}
+
+function getDomainLocalePath(url: string, locale: string): string | undefined {
+  return getDomainLocaleUrl(url, locale, {
+    basePath: __basePath,
+    currentHostname: getCurrentHostname(),
+    domainItems: getDomainLocales(),
+  });
+}
+
 /**
  * Apply locale prefix to a URL for client-side navigation.
  * Same logic as Link's applyLocaleToHref but reads from window globals.
@@ -139,12 +159,11 @@ export function applyNavigationLocale(url: string, locale?: string): string {
   if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("//")) {
     return url;
   }
-  const defaultLocale = window.__VINEXT_DEFAULT_LOCALE__;
-  // Default locale doesn't get a prefix
-  if (locale === defaultLocale) return url;
-  // Don't double-prefix
-  if (url.startsWith(`/${locale}/`) || url === `/${locale}`) return url;
-  return `/${locale}${url.startsWith("/") ? url : `/${url}`}`;
+
+  const domainLocalePath = getDomainLocalePath(url, locale);
+  if (domainLocalePath) return domainLocalePath;
+
+  return addLocalePrefix(url, locale, window.__VINEXT_DEFAULT_LOCALE__ ?? "");
 }
 
 /** Check if a URL is external (any URL scheme per RFC 3986, or protocol-relative) */
@@ -219,6 +238,7 @@ interface SSRContext {
   locale?: string;
   locales?: string[];
   defaultLocale?: string;
+  domainLocales?: VinextNextData["domainLocales"];
 }
 
 // ---------------------------------------------------------------------------
@@ -457,12 +477,18 @@ function buildRouterValue(
   },
 ): NextRouter {
   const _ssrState = _getSSRContext();
+  const nextData =
+    typeof window !== "undefined"
+      ? (window.__NEXT_DATA__ as VinextNextData | undefined)
+      : undefined;
   const locale = typeof window === "undefined" ? _ssrState?.locale : window.__VINEXT_LOCALE__;
   const locales = typeof window === "undefined" ? _ssrState?.locales : window.__VINEXT_LOCALES__;
   const defaultLocale =
     typeof window === "undefined" ? _ssrState?.defaultLocale : window.__VINEXT_DEFAULT_LOCALE__;
+  const domainLocales =
+    typeof window === "undefined" ? _ssrState?.domainLocales : nextData?.domainLocales;
 
-  const route = typeof window !== "undefined" ? (window.__NEXT_DATA__?.page ?? pathname) : pathname;
+  const route = typeof window !== "undefined" ? (nextData?.page ?? pathname) : pathname;
 
   return {
     pathname,
@@ -473,9 +499,10 @@ function buildRouterValue(
     locale,
     locales,
     defaultLocale,
+    domainLocales,
     isReady: true,
     isPreview: false,
-    isFallback: typeof window !== "undefined" && window.__NEXT_DATA__?.isFallback === true,
+    isFallback: typeof window !== "undefined" && nextData?.isFallback === true,
     ...methods,
     events: routerEvents,
   };

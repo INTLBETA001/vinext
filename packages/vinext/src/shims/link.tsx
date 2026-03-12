@@ -29,6 +29,7 @@ import {
   withBasePath,
 } from "./url-utils.js";
 import { appendSearchParamsToUrl, type UrlQuery, urlQueryToSearchParams } from "../utils/query.js";
+import { addLocalePrefix, getDomainLocaleUrl, type DomainLocale } from "../utils/domain-locale.js";
 import type { VinextNextData } from "../client/vinext-next-data.js";
 
 interface NavigateEvent {
@@ -234,6 +235,28 @@ function getDefaultLocale(): string | undefined {
   return globalThis.__VINEXT_DEFAULT_LOCALE__;
 }
 
+function getDomainLocales(): readonly DomainLocale[] | undefined {
+  if (typeof window !== "undefined") {
+    return (window.__NEXT_DATA__ as VinextNextData | undefined)?.domainLocales;
+  }
+  return globalThis.__VINEXT_DOMAIN_LOCALES__;
+}
+
+function getCurrentHostname(): string | undefined {
+  if (typeof window !== "undefined") return window.location.hostname;
+  return globalThis.__VINEXT_HOSTNAME__;
+}
+
+function getDomainLocaleHref(href: string, locale: string): string | undefined {
+  // Only cross-domain locale switches need a special absolute URL here.
+  // Same-domain cases fall back to the standard locale-prefix logic below.
+  return getDomainLocaleUrl(href, locale, {
+    basePath: __basePath,
+    currentHostname: getCurrentHostname(),
+    domainItems: getDomainLocales(),
+  });
+}
+
 /**
  * Apply locale prefix to a URL path based on the locale prop.
  * - locale="fr" → prepend /fr (unless it already has a locale prefix)
@@ -257,19 +280,12 @@ function applyLocaleToHref(href: string, locale: string | false | undefined): st
     return href;
   }
 
-  // locale is a string: prepend the locale prefix if not already present
-  const defaultLocale = getDefaultLocale();
-  // For the default locale, Next.js doesn't add a prefix
-  if (locale === defaultLocale) {
-    return href;
+  const domainLocaleHref = getDomainLocaleHref(href, locale);
+  if (domainLocaleHref) {
+    return domainLocaleHref;
   }
 
-  // Check if href already starts with the locale
-  if (href.startsWith(`/${locale}/`) || href === `/${locale}`) {
-    return href;
-  }
-
-  return `/${locale}${href.startsWith("/") ? href : `/${href}`}`;
+  return addLocalePrefix(href, locale, getDefaultLocale() ?? "");
 }
 
 const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
