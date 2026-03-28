@@ -572,49 +572,51 @@ async function _renderPage(request, url, manifest) {
       { status: 404, headers: { "Content-Type": "text/html" } });
   }
 
-	  const { route, params } = match;
-	  const __uCtx = _createUnifiedCtx({
-	    executionContext: _getRequestExecutionContext(),
-	  });
-	  return _runWithUnifiedCtx(__uCtx, async () => {
-	    ensureFetchPatch();
-	    try {
-	    const routePattern = patternToNextFormat(route.pattern);
-	    if (typeof setSSRContext === "function") {
-	      setSSRContext({
-	        pathname: routePattern,
-	        query: { ...params, ...parseQuery(routeUrl) },
-	        asPath: routeUrl,
-	        locale: locale,
-        locales: i18nConfig ? i18nConfig.locales : undefined,
-        defaultLocale: currentDefaultLocale,
-        domainLocales: domainLocales,
-      });
-    }
-
-    if (i18nConfig) {
-      setI18nContext({
-        locale: locale,
-        locales: i18nConfig.locales,
-        defaultLocale: currentDefaultLocale,
-        domainLocales: domainLocales,
-        hostname: new URL(request.url).hostname,
-      });
-    }
-
-    const pageModule = route.module;
-    const PageComponent = pageModule.default;
-	    if (!PageComponent) {
-	      return new Response("Page has no default export", { status: 500 });
-	    }
-	    // Build font Link header early so it's available for ISR cached responses too.
-	    // Font preloads are module-level state populated at import time and persist across requests.
-	    var _fontLinkHeader = "";
-	    var _allFp = [];
+  const { route, params } = match;
+  const __uCtx = _createUnifiedCtx({
+    executionContext: _getRequestExecutionContext(),
+  });
+  return _runWithUnifiedCtx(__uCtx, async () => {
+    ensureFetchPatch();
     try {
-      var _fpGoogle = typeof _getSSRFontPreloadsGoogle === "function" ? _getSSRFontPreloadsGoogle() : [];
-      var _fpLocal = typeof _getSSRFontPreloadsLocal === "function" ? _getSSRFontPreloadsLocal() : [];
-      _allFp = _fpGoogle.concat(_fpLocal);
+      const routePattern = patternToNextFormat(route.pattern);
+      if (typeof setSSRContext === "function") {
+        setSSRContext({
+          pathname: routePattern,
+          query: { ...params, ...parseQuery(routeUrl) },
+          asPath: routeUrl,
+          locale: locale,
+          locales: i18nConfig ? i18nConfig.locales : undefined,
+          defaultLocale: currentDefaultLocale,
+          domainLocales: domainLocales,
+        });
+      }
+
+      if (i18nConfig) {
+        setI18nContext({
+          locale: locale,
+          locales: i18nConfig.locales,
+          defaultLocale: currentDefaultLocale,
+          domainLocales: domainLocales,
+          hostname: new URL(request.url).hostname,
+        });
+      }
+
+      const pageModule = route.module;
+      const PageComponent = pageModule.default;
+      if (!PageComponent) {
+        return new Response("Page has no default export", { status: 500 });
+      }
+      // Build font Link header early so it's available for ISR cached responses too.
+      // Font preloads are module-level state populated at import time and persist across requests.
+      var _fontLinkHeader = "";
+      var _allFp = [];
+      try {
+        var _fpGoogle =
+          typeof _getSSRFontPreloadsGoogle === "function" ? _getSSRFontPreloadsGoogle() : [];
+        var _fpLocal =
+          typeof _getSSRFontPreloadsLocal === "function" ? _getSSRFontPreloadsLocal() : [];
+        _allFp = _fpGoogle.concat(_fpLocal);
 	      if (_allFp.length > 0) {
 	        _fontLinkHeader = _allFp.map(function(p) { return "<" + p.href + ">; rel=preload; as=font; type=" + p.type + "; crossorigin"; }).join(", ");
 	      }
